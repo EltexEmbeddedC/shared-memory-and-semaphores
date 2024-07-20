@@ -4,6 +4,7 @@ ChatRoom *chatroom;
 int sem_id;
 char current_user[MAX_NAME_LEN];
 char input_message[MAX_MSG_LEN];
+int key_catcher[3];
 
 WINDOW *msg_win, *user_win, *input_win;
 WINDOW *msg_win_border, *user_win_border, *input_win_border;
@@ -22,6 +23,7 @@ void init_ncurses() {
     cbreak();
     noecho();
     keypad(stdscr, TRUE);
+    keypad(input_win, TRUE);
     start_color();
     init_pair(1, COLOR_CYAN, COLOR_BLACK);
     init_pair(2, COLOR_GREEN, COLOR_BLACK);
@@ -62,8 +64,11 @@ void create_windows() {
 void display_messages() {
     werase(msg_win);
     int start = chatroom->message_count - msg_scroll_pos - msg_win_height / 2;
+
     if (start < 0) start = 0;
-    for (int i = start; i < chatroom->message_count; i++) {
+    for (int i = start; i < start + msg_win_height / 2; i++) {
+        if (i >= chatroom->message_count) break;
+
         wattron(msg_win, COLOR_PAIR(1));
         wprintw(msg_win, "%s: ", chatroom->messages[i].username);
         wattroff(msg_win, COLOR_PAIR(1));
@@ -80,7 +85,9 @@ void display_messages() {
 void display_users() {
     werase(user_win);
     int start = user_scroll_pos;
-    for (int i = start; i < chatroom->num_clients; i++) {
+    for (int i = start; i < start + user_win_height; i++) {
+        if (i >= chatroom->num_clients) break;
+
         wprintw(user_win, "%s\n", chatroom->clients[i]);
     }
     wrefresh(user_win);
@@ -94,15 +101,28 @@ void display_input() {
     wrefresh(input_win);
 }
 
+void catch(const char ch) {
+    key_catcher[0] = key_catcher [1];
+    key_catcher[1] = key_catcher[2];
+    key_catcher[2] = ch;
+}
+
+bool is_key_up(){
+    return key_catcher[0] == 27 && key_catcher[1] == 91 && key_catcher[2] == 65;
+}
+
+bool is_key_down(){
+    return key_catcher[0] == 27 && key_catcher[1] == 91 && key_catcher[2] == 66;
+}
+
 void handle_input() {
     int ch;
     int input_index = strlen(input_message);
 
     while ((ch = wgetch(input_win)) != '\n') {
-        if (ch == 27) { // Escape key
-            clean_up();
-            exit(0);
-        } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
+        catch(ch);
+
+        if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
             if (input_index > 0) {
                 input_message[--input_index] = '\0';
             }
@@ -111,9 +131,12 @@ void handle_input() {
             display_messages();
             display_users();
             display_input();
-        } else if (ch == '\t') { // Tab key
+        } else if (ch == '\t') {
             switch_window();
-        } else if (ch == KEY_UP) {
+        } else if (is_key_up()) {
+            input_index -= 2;
+            input_message[input_index] = '\0';
+
             if (active_window == 0 && msg_scroll_pos < chatroom->message_count - msg_win_height / 2) {
                 msg_scroll_pos++;
                 display_messages();
@@ -121,7 +144,10 @@ void handle_input() {
                 user_scroll_pos++;
                 display_users();
             }
-        } else if (ch == KEY_DOWN) {
+        } else if (is_key_down()) {
+            input_index -= 2;
+            input_message[input_index] = '\0';
+
             if (active_window == 0 && msg_scroll_pos > 0) {
                 msg_scroll_pos--;
                 display_messages();
@@ -211,6 +237,9 @@ void cleanup(int signum) {
 void run_client(const char *username) {
     strcpy(current_user, username);
     signal(SIGINT, cleanup);
+    key_catcher[0] = 0;
+    key_catcher[1] = 0;
+    key_catcher[2] = 0;
 
     int shm_id = shmget(SHM_KEY, sizeof(ChatRoom), 0666);
     if (shm_id < 0) {
